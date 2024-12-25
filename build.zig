@@ -199,6 +199,7 @@ pub fn build(b: *std.Build) !void {
                 .PCRE_PARENS_NEST_LIMIT = 250,
                 .PCRE_MATCH_LIMIT = 10000000,
                 .PCRE_MATCH_LIMIT_RECURSION = "MATCH_LIMIT",
+                .PCREGREP_BUFSIZE = 20480,
                 .NEWLINE = 10, // LF
                 .NO_RECURSE = 1,
                 .PCRE_POSIX_MALLOC_THRESHOLD = 10,
