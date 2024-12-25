@@ -40,14 +40,7 @@ pub fn build(b: *std.Build) !void {
         "-fno-sanitize=undefined",
     };
 
-    const openssl = b.option(bool, "enable-openssl", "Use OpenSSL instead of MbedTLS") orelse false;
-
     if (target.result.os.tag == .windows) {
-        if (openssl) {
-            std.log.err("OpenSSL option unsupported on Windows", .{});
-            return;
-        }
-
         lib.linkSystemLibrary("winhttp");
         lib.linkSystemLibrary("rpcrt4");
         lib.linkSystemLibrary("crypt32");
@@ -68,77 +61,17 @@ pub fn build(b: *std.Build) !void {
         lib.addWin32ResourceFile(.{ .file = libgit_src.path("src/libgit2/git2.rc") });
         lib.addCSourceFiles(.{ .root = libgit_root, .files = &util_win32_sources, .flags = &flags });
     } else {
-        if (openssl) {
-            // OpenSSL backend
-            const openssl_dep = b.dependency("openssl", .{});
-            const openssl_lib = openssl_dep.artifact("openssl");
-            lib.linkLibrary(openssl_lib);
-            features.addValues(.{
-                .GIT_HTTPS = 1,
-                .GIT_OPENSSL = 1,
-                .GIT_SHA1_OPENSSL = 1,
-                .GIT_SHA256_OPENSSL = 1,
+        features.addValues(.{
+            .GIT_HTTPS = 1,
+            .GIT_OPENSSL = 1,
+            .GIT_OPENSSL_DYNAMIC = 1,
+            .GIT_SHA1_OPENSSL = 1,
+            .GIT_SHA256_OPENSSL = 1,
 
-                .GIT_USE_FUTIMENS = 1,
-                .GIT_IO_POLL = 1,
-                .GIT_IO_SELECT = 1,
-            });
-        } else {
-            // mbedTLS https and SHA backend
-            lib.linkSystemLibrary("mbedtls");
-            lib.linkSystemLibrary("mbedcrypto");
-            lib.linkSystemLibrary("mbedx509");
-            features.addValues(.{
-                .GIT_HTTPS = 1,
-                .GIT_MBEDTLS = 1,
-                .GIT_SHA1_MBEDTLS = 1,
-                .GIT_SHA256_MBEDTLS = 1,
-
-                .GIT_USE_FUTIMENS = 1,
-                .GIT_IO_POLL = 1,
-                .GIT_IO_SELECT = 1,
-            });
-        }
-
-        // ntlmclient
-        {
-            const ntlm = b.addStaticLibrary(.{
-                .name = "ntlmclient",
-                .target = target,
-                .optimize = optimize,
-                .link_libc = true,
-            });
-            ntlm.addIncludePath(libgit_src.path("deps/ntlmclient"));
-            if (openssl) addOpenSSLHeaders(ntlm);
-
-            const ntlm_cflags = .{
-                "-Wno-implicit-fallthrough",
-                "-DNTLM_STATIC=1",
-                "-DUNICODE_BUILTIN=1",
-                if (openssl)
-                    "-DCRYPT_OPENSSL"
-                else
-                    "-DCRYPT_MBEDTLS",
-            };
-            ntlm.addCSourceFiles(.{
-                .root = libgit_root,
-                .files = &ntlm_sources,
-                .flags = &ntlm_cflags,
-            });
-            ntlm.addCSourceFiles(.{
-                .root = libgit_root,
-                .files = if (openssl) &.{
-                    "deps/ntlmclient/crypt_openssl.c",
-                } else &.{
-                    "deps/ntlmclient/crypt_mbedtls.c",
-                },
-                .flags = &ntlm_cflags,
-            });
-
-            lib.linkLibrary(ntlm);
-            lib.addAfterIncludePath(libgit_src.path("deps/ntlmclient")); // avoid aliasing ntlmclient/util.h and src/util/util.h
-            features.addValues(.{ .GIT_NTLM = 1 });
-        }
+            .GIT_USE_FUTIMENS = 1,
+            .GIT_IO_POLL = 1,
+            .GIT_IO_SELECT = 1,
+        });
 
         lib.addCSourceFiles(.{
             .root = libgit_root,
@@ -147,23 +80,18 @@ pub fn build(b: *std.Build) !void {
         });
         lib.addCSourceFiles(.{
             .root = libgit_root,
-            .files = if (openssl) &.{
+            .files = &.{
                 "src/util/hash/openssl.c",
-            } else &.{
-                "src/util/hash/mbedtls.c",
             },
             .flags = &flags,
         });
     }
 
-    if (b.option(bool, "enable-ssh", "Enable SSH support") orelse false) {
-        lib.linkSystemLibrary("ssh2");
-        features.addValues(.{
-            .GIT_SSH = 1,
-            .GIT_SSH_LIBSSH2 = 1,
-            .GIT_SSH_LIBSSH2_MEMORY_CREDENTIALS = 1, // @Todo: check for `libssh2_userauth_publickey_frommemory`?
-        });
-    }
+    features.addValues(.{
+        .GIT_SSH = 1,
+        .GIT_SSH_EXEC = 1,
+        .GIT_SSH_LIBSSH2_MEMORY_CREDENTIALS = 1, // @Todo: check for `libssh2_userauth_publickey_frommemory`?
+    });
 
     // Bundled dependencies
     {
@@ -285,76 +213,15 @@ pub fn build(b: *std.Build) !void {
     lib.installHeadersDirectory(libgit_src.path("include"), "", .{});
     b.installArtifact(lib);
 
-    const cli_step = b.step("run-cli", "Build and run the command-line interface");
-    {
-        const cli = b.addExecutable(.{
-            .name = "git2_cli",
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        });
-
-        cli.addConfigHeader(features);
-        cli.addIncludePath(libgit_src.path("include"));
-        cli.addIncludePath(libgit_src.path("src/util"));
-        cli.addIncludePath(libgit_src.path("src/cli"));
-        if (openssl) addOpenSSLHeaders(cli);
-
-        if (target.result.os.tag == .windows)
-            cli.addCSourceFiles(.{ .root = libgit_root, .files = &cli_win32_sources })
-        else
-            cli.addCSourceFiles(.{ .root = libgit_root, .files = &cli_unix_sources });
-
-        cli.linkLibrary(lib);
-        cli.addCSourceFiles(.{
-            .root = libgit_root,
-            .files = &cli_sources,
-            // @Todo: see above
-            // .flags = &.{"-std=c90"},
-        });
-
-        // independant install step so you can easily access the binary
-        const cli_install = b.addInstallArtifact(cli, .{});
-        const cli_run = b.addRunArtifact(cli);
-        if (b.args) |args| {
-            for (args) |arg| cli_run.addArg(arg);
-        }
-        cli_run.step.dependOn(&cli_install.step);
-        cli_step.dependOn(&cli_run.step);
-    }
-
-    const examples_step = b.step("run-example", "Build and run library usage example app");
-    {
-        const exe = b.addExecutable(.{
-            .name = "lg2",
-            .target = target,
-            .optimize = optimize,
-            .link_libc = true,
-        });
-
-        exe.addIncludePath(libgit_src.path("examples"));
-        exe.addCSourceFiles(.{
-            .root = libgit_root,
-            .files = &example_sources,
-            .flags = &.{
-                // "-std=c90",
-                "-DGIT_DEPRECATE_HARD",
-            },
-        });
-
-        exe.addIncludePath(libgit_src.path("include"));
-        if (openssl) addOpenSSLHeaders(exe);
-        exe.linkLibrary(lib);
-
-        // independent install step so you can easily access the binary
-        const examples_install = b.addInstallArtifact(exe, .{});
-        const example_run = b.addRunArtifact(exe);
-        if (b.args) |args| {
-            for (args) |arg| example_run.addArg(arg);
-        }
-        example_run.step.dependOn(&examples_install.step);
-        examples_step.dependOn(&example_run.step);
-    }
+    const translate_c = b.addTranslateC(.{
+        .root_source_file = libgit_src.path("include/git2.h"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    translate_c.addIncludePath(libgit_src.path("include"));
+    const git2_mod = translate_c.addModule("git2");
+    git2_mod.linkLibrary(lib);
 
     const tests_step = b.step("run-tests", "Tests");
     {
@@ -364,6 +231,7 @@ pub fn build(b: *std.Build) !void {
             .optimize = optimize,
             .link_libc = true,
         });
+        tests.root_module.addImport("git2", git2_mod);
 
         const fixture = b.addOptions();
         fixture.addOptionPath("resources", libgit_src.path("tests/resources"));
@@ -373,20 +241,10 @@ pub fn build(b: *std.Build) !void {
         tests.addConfigHeader(features);
         tests.addIncludePath(libgit_src.path("include"));
         tests.addIncludePath(libgit_src.path("src/util"));
-        if (openssl) addOpenSSLHeaders(tests);
-
-        tests.linkLibrary(lib);
 
         const tests_run = b.addRunArtifact(tests);
         tests_step.dependOn(&tests_run.step);
     }
-}
-
-fn addOpenSSLHeaders(compile: *std.Build.Step.Compile) void {
-    const b = compile.step.owner;
-    const openssl_dep = b.dependency("openssl", .{});
-    const openssl_lib = openssl_dep.artifact("openssl");
-    compile.addIncludePath(openssl_lib.getEmittedIncludeTree());
 }
 
 const libgit_sources = [_][]const u8{
@@ -434,7 +292,7 @@ const libgit_sources = [_][]const u8{
     "src/libgit2/graph.c",
     "src/libgit2/hashsig.c",
     "src/libgit2/ident.c",
-    "src/libgit2/idxmap.c",
+    "src/libgit2/index_map.c",
     "src/libgit2/ignore.c",
     "src/libgit2/index.c",
     "src/libgit2/indexer.c",
@@ -454,10 +312,8 @@ const libgit_sources = [_][]const u8{
     "src/libgit2/odb_loose.c",
     "src/libgit2/odb_mempack.c",
     "src/libgit2/odb_pack.c",
-    "src/libgit2/offmap.c",
     "src/libgit2/oid.c",
     "src/libgit2/oidarray.c",
-    "src/libgit2/oidmap.c",
     "src/libgit2/pack-objects.c",
     "src/libgit2/pack.c",
     "src/libgit2/parse.c",
@@ -546,7 +402,6 @@ const util_sources = [_][]const u8{
     "src/util/sortedcache.c",
     "src/util/str.c",
     "src/util/strlist.c",
-    "src/util/strmap.c",
     "src/util/thread.c",
     "src/util/tsort.c",
     "src/util/utf8.c",

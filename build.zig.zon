@@ -4,12 +4,8 @@
     .minimum_zig_version = "0.13.0",
     .dependencies = .{
         .libgit2 = .{
-            .url = "https://github.com/libgit2/libgit2/archive/refs/tags/v1.8.1.tar.gz",
-            .hash = "12208db692747f305b79ecfb3ac69e691d0b9584383ec4bcb0eb07b62b73de77b1cf",
-        },
-        .openssl = .{
-            .url = "https://github.com/allyourcodebase/openssl/archive/refs/tags/3.3.1-1.tar.gz",
-            .hash = "12207c40cefa38fe90e4230dfba2e5c76b37e1ee36602512cad8ff0501f892002a65",
+            .url = "git+https://github.com/libgit2/libgit2.git#ccc202802c792fbbc85cce9ce262b347fbc1755c",
+            .hash = "1220e4baaebaf353b45060c8902bdbe7b70cfddc884f0346b3a630ee5604d0c66869",
         },
     },
     .paths = .{
